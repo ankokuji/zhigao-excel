@@ -1,9 +1,9 @@
-var xlsx = require('node-xlsx')
+const xlsx = require('node-xlsx')
 const _ = require("lodash/fp")
 const fs = require("fs")
 const path = require("path")
 
-var sheets = xlsx.parse('./2016.xlsx')
+const sheets = xlsx.parse('./2016.xlsx')
 const accumAll = _.reduce(accumulate)({})
 
 function tap(a) {
@@ -27,6 +27,12 @@ function writeXlsx(table) {
   }])
 }
 
+/**
+ * Get table title of final output excel file.
+ *
+ * @param {*} sheets
+ * @returns
+ */
 function getTableTitle(sheets) {
   return _.compose(curryFlip2(_.concat)("统计城市数目"), _.head, _.property("data"), _.head)(sheets)
 }
@@ -58,7 +64,9 @@ function curryFlip2(f) {
 }
 
 function accumulate(accum, sheet) {
-  _.compose(_.reduce(accumEachRow)(accum))(sheet.data)
+  // Because we are not using immutable data structure here,
+  // this is actually unnecessary.
+  const accumRes = _.compose(_.reduce(accumEachRow)(accum))(sheet.data)
 
   function accumEachRow(innerAccum, row) {
     const [date] = row
@@ -76,7 +84,7 @@ function accumulate(accum, sheet) {
     return innerAccum
   }
 
-  return accum
+  return accumRes
 }
 
 /**
