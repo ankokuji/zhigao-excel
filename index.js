@@ -3,7 +3,7 @@ const _ = require("lodash/fp")
 const fs = require("fs")
 const path = require("path")
 
-var sheets = xlsx.parse('./2016.xlsx') 
+var sheets = xlsx.parse('./2016.xlsx')
 const accumAll = _.reduce(accumulate)({})
 
 function tap(a) {
@@ -14,9 +14,7 @@ function main() {
   const tableTitle = getTableTitle(sheets)
   const res = _.compose(_.map(calculate), accumAll, _.map(formatDateOfSheet))(sheets)
   const table = _.concat([tableTitle])(res)
-
   const buffer = writeXlsx(table)
-
   fs.writeFileSync(path.join(__dirname, "output.xlsx"), buffer)
 }
 
@@ -35,6 +33,7 @@ function getTableTitle(sheets) {
 
 function calculate(sheet) {
   return _.compose(calculateRow, _.map(_.identity))(sheet)
+
   function calculateRow(row) {
 
     //客座率=合计旅客数/提供座位数
@@ -51,7 +50,7 @@ function calculate(sheet) {
  * @returns
  */
 function curryFlip2(f) {
-  return function(x) {
+  return function (x) {
     return function (y) {
       return f(y)(x)
     }
@@ -63,8 +62,8 @@ function accumulate(accum, sheet) {
 
   function accumEachRow(innerAccum, row) {
     const [date] = row
-    
-    if(!innerAccum[date]) {
+
+    if (!innerAccum[date]) {
       const columnNum = row.length + 1
       const newArray = _.times(_.constant(0))(columnNum)
       newArray[0] = date
@@ -80,6 +79,13 @@ function accumulate(accum, sheet) {
   return accum
 }
 
+/**
+ * Add the array from the second item by item.
+ *
+ * @param {array} xs
+ * @param {array} ys
+ * @returns
+ */
 function addWithEachPos(xs, ys) {
   return _.zipWith(sumIfNum)(xs)(ys)
 
@@ -92,6 +98,12 @@ function addWithEachPos(xs, ys) {
   }
 }
 
+/**
+ * As the name of function indicates.
+ *
+ * @param {*} sheet
+ * @returns
+ */
 function formatDateOfSheet(sheet) {
   const processEachRow = _.compose(formatDateOfRow)
 
@@ -103,23 +115,29 @@ function formatDateOfSheet(sheet) {
   const formatDateOfDataOfSheet = _.compose(_.map(processEachRow), _.tail)
 
   data = formatDateOfDataOfSheet(sheet.data)
-  return {data}
-
+  return {
+    data
+  }
 }
 
+/**
+ * Format date from excel to "YYYY-MM-DD" pattern.
+ *
+ * @param {*} dateString
+ * @returns
+ */
 function formatDate(dateString) {
   const slashSplit = _.split("-")(dateString)
-  if(slashSplit.length === 3) {
-    // return _.compose(_.join("-"), _.reverse)(slashSplit)
+  if (slashSplit.length === 3) {
     return _.compose(_.join("-"), deleteLastChinese)(slashSplit)
-  } else if(dateString === "总合计"){
+  } else if (dateString === "总合计") {
     return dateString
   } else {
     return transformExcelDate(dateString)
   }
 
   function deleteLastChinese(arr) {
-    const deleted = _.compose(_.head, _.split("合计"),_.last)(arr)
+    const deleted = _.compose(_.head, _.split("合计"), _.last)(arr)
     // _.last(arr)
     arr[arr.length - 1] = deleted
     return arr
