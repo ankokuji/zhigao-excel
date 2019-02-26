@@ -1,0 +1,7 @@
+{
+  "name": "zhigao-excel",
+  "dependencies": {
+    "lodash": "^4.17.11",
+    "node-xlsx": "^0.14.1"
+  }
+}
