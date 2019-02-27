@@ -2,89 +2,93 @@ const xlsx = require("node-xlsx");
 const _ = require("lodash/fp");
 const fs = require("fs");
 const path = require("path");
-
-const sheets = xlsx.parse("./2016.xlsx");
-const accumAll = _.reduce(accumulate)({});
+const [flightDisMap, sectionMap] = require("./config.json")
 
 const sectionAndFlightDistanceSheetName = "片区与航距";
 
-const [flightDisMap, sectionMap] = generateFlightDistanceAndSectionMap(sheets);
-
-/**
- *
- *
- * @param {*} sheets
- * @returns
- */
-function generateFlightDistanceAndSectionMap(sheets) {
-  const rows = _.find({ name: sectionAndFlightDistanceSheetName })(sheets).data;
-
-  const flightDisMap = _.compose(
-    _.fromPairs,
-    _.tail,
-    _.map(_.takeLast(2))
-  )(rows);
-
-  const sectionList = _.compose(
-    validSectionList,
-    _.map(_.head),
-    _.tail
-  )(rows);
-  const sectionFlightList = _.compose(
-    _.compact,
-    _.map(_.nth(1)),
-    _.tail
-  )(rows);
-
-  const sectionMap = _.compose(
-    _.mapValues(_.compact),
-    _.mapValues(_.map(_.nth(1))),
-    _.groupBy(_.head)
-  )(_.zip(sectionList, sectionFlightList));
-
-  function validSectionList(list) {
-    let currentSection;
-    return _.map(section => {
-      if (section) {
-        currentSection = section;
-      }
-      return currentSection;
-    })(list);
-  }
-
-  return [flightDisMap, sectionMap];
-}
+const sheets = xlsx.parse("./2016.xlsx");
 
 function tap(a) {
-  debugger;
   return a
 }
 
 function main() {
-  const tableTitle = getTableTitle(sheets);
-  const res = _.compose(
-    _.map(calculate),
-    accumAll,
-    _.map(formatDateOfSheet),
-    tap,
-    _.filter(sheet => {
-      return sheet.name !== sectionAndFlightDistanceSheetName;
-    })
-  )(sheets);
-  const table = _.concat([tableTitle])(res);
-  const buffer = writeXlsx(table);
+  const table = generateTotalTable(_.cloneDeep(sheets));
+  const districtTable = generateDistrictTable(_.cloneDeep(sheets))
+
+  const transformDistrictTable = _.compose(_.map(([district, data]) => {
+    return {
+      name: district,
+      data
+    }
+  }), _.toPairs)(districtTable)
+
+  const combineTables = [{
+    name: "总体",
+    data: table
+  }, ...transformDistrictTable]
+  const buffer = writeXlsx(combineTables);
   fs.writeFileSync(path.join(__dirname, "output.xlsx"), buffer);
 }
 
 main();
 
-function writeXlsx(table) {
-  return xlsx.build([
-    {
-      name: "out",
-      data: table
+function generateDistrictTable(sheets) {
+  const res = _.mapValues(handleEachDistrict)(sectionMap)
+
+  return res
+  /**
+   * Generate table from target trip of every district.
+   *
+   * @param {*} trips
+   * @returns
+   */
+  function handleEachDistrict(trips) {
+    const res = _.map(_.compose(extractTargetSheet))(trips)
+
+    return generateTotalTable(res)
+
+    function extractTargetSheet(tripOfDistance) {
+      const out = _.find((sheet) => {
+        const trip = sheet.name
+        const flag = testTripName(trip, (name) => {
+          return name === tripOfDistance
+        })
+        return !!flag
+      })(sheets)
+
+      if (!out) {
+        // throw new Error("Can't find district!!")
+        console.log(`Can't find district!! --- ${tripOfDistance}`)
+      }
+      return out
     }
-  ]);
+  }
+}
+
+/**
+ * Generate a statitics table of all sheets with total counts.
+ *
+ * @param {*} sheets
+ * @returns
+ */
+function generateTotalTable(sheets) {
+  sheets = _.compact(sheets)
+  const tableTitle = getTableTitle(sheets);
+  const accumAll = _.reduce(accumulate)({});
+  const res = _.compose(
+    // Delete last column because it was used only in calculating.
+    _.map(_.initial), _.map(calculate), accumAll, _.map(formatDateOfSheet), tap, _.filter(sheet => {
+      // Filter `"片区与航距"`.
+      return sheet.name !== sectionAndFlightDistanceSheetName;
+      // Why deep clone?
+    }))(sheets);
+  const table = _.concat([tableTitle])(res);
+  return table;
+}
+
+function writeXlsx(tables) {
+  return xlsx.build(tables);
 }
 
 /**
@@ -114,7 +118,8 @@ function calculate(sheet) {
     row[6] = row[3] / row[2];
 
     // 座公里=总合计收入/（提供座位数*航距）
-    row[10] = row[4] / (row[2] * _.last(row)) * (_.nth(-2)(row))
+    // row[10] = row[4] / (row[2] * _.last(row)) * (_.nth(-2)(row))
+    row[10] = row[4] / _.last(row)
     return row;
   }
 }
@@ -127,13 +132,20 @@ function calculate(sheet) {
  * @returns
  */
 function curryFlip2(f) {
-  return function(x) {
-    return function(y) {
+  return function (x) {
+    return function (y) {
       return f(y)(x);
     };
   };
 }
 
+/**
+ * Accumulate every sheet position by position group by day.
+ *
+ * @param {*} accum
+ * @param {*} sheet
+ * @returns
+ */
 function accumulate(accum, sheet) {
   // Because we are not using immutable data structure here,
   // usage of reduce is actually unnecessary.
@@ -155,8 +167,12 @@ function accumulate(accum, sheet) {
     // Append flight count and flight distance to the end of row to accumulate.
     const finalRow = _.compose(
       _.concat(row),
+      // Count trip.
       _.concat([1]),
-      _.concat([flightDistance])
+      // 上海航距
+      _.concat([flightDistance]),
+      // 上海提供座位*上海航距
+      _.concat(row[2] * flightDistance)
     )([]);
 
     const accumedArr = addWithEachPos(finalRow, innerAccum[date]);
@@ -168,6 +184,45 @@ function accumulate(accum, sheet) {
   return accumRes;
 }
 
+/**
+ *
+ *
+ * @param {*} name
+ * @param {*} f
+ * @returns
+ */
+function testTripName(name, f) {
+  name = treatSpecialName(name);
+
+  const dashSplit = _.split("-")(name);
+  let realFlightName = name;
+
+  if (dashSplit.length !== 2) {
+    realFlightName = "昆明-" + name;
+  }
+
+  let response = f(realFlightName);
+
+  if (!response) {
+    response =
+      f(
+        _.compose(
+          _.join("-"),
+          _.reverse,
+          _.split("-")
+        )(realFlightName)
+      );
+  }
+
+  return response;
+}
+
+/**
+ * Get flight distance of specific trip.
+ *
+ * @param {*} name
+ * @returns
+ */
 function getFlightDistance(name) {
   name = treatSpecialName(name);
 
