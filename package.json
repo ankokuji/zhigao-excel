@@ -1,5 +1,8 @@
 {
   "name": "zhigao-excel",
+  "scripts": {
+    "start": "node index.js"
+  },
   "dependencies": {
     "lodash": "^4.17.11",
     "node-xlsx": "^0.14.1"
