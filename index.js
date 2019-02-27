@@ -51,21 +51,22 @@ function calculate(sheet) {
 
 /**
  * Return a curried and argument reversed version of function `f`.
- *
+ * 
+ * @type :: (a -> b -> c) -> b -> a -> c
  * @param {*} f
  * @returns
  */
 function curryFlip2(f) {
   return function (x) {
     return function (y) {
-      return f(y)(x)
+      return f (y) (x)
     }
   }
 }
 
 function accumulate(accum, sheet) {
   // Because we are not using immutable data structure here,
-  // this is actually unnecessary.
+  // usage of reduce is actually unnecessary.
   const accumRes = _.compose(_.reduce(accumEachRow)(accum))(sheet.data)
 
   function accumEachRow(innerAccum, row) {
@@ -113,35 +114,37 @@ function addWithEachPos(xs, ys) {
  * @returns
  */
 function formatDateOfSheet(sheet) {
-  const processEachRow = _.compose(formatDateOfRow)
-
+  
   function formatDateOfRow(row) {
     row[0] = formatDate(row[0])
     return row
   }
+  const formatDateOfDataOfSheet = _.compose(_.map(formatDateOfRow), _.tail)
 
-  const formatDateOfDataOfSheet = _.compose(_.map(processEachRow), _.tail)
-
-  data = formatDateOfDataOfSheet(sheet.data)
   return {
-    data
+    data: formatDateOfDataOfSheet(sheet.data)
   }
 }
 
 /**
  * Format date from excel to "YYYY-MM-DD" pattern.
  *
- * @param {*} dateString
+ * @param {*} dateItem
  * @returns
  */
-function formatDate(dateString) {
-  const slashSplit = _.split("-")(dateString)
-  if (slashSplit.length === 3) {
-    return _.compose(_.join("-"), deleteLastChinese)(slashSplit)
-  } else if (dateString === "总合计") {
-    return dateString
+function formatDate(dateItem) {
+
+  if(_.isString(dateItem)) {
+    // Is a string of "YYYY-MM-DD总计" or "总合计".
+    const slashSplit = _.split("-")(dateItem)
+    if ((slashSplit).length === 3) {
+      return _.compose(_.join("-"), deleteLastChinese)(slashSplit)
+    } else {
+      return dateItem
+    }
   } else {
-    return transformExcelDate(dateString)
+    // Is from excel date type and in js environment will be a number.
+    return transformExcelDate(dateItem)
   }
 
   function deleteLastChinese(arr) {
@@ -155,12 +158,14 @@ function formatDate(dateString) {
 
 /**
  * Should minus 2. Why?
- *
+ * Have some bugs.
+ * 
+ * @deprecated
  * @param {*} numb
  * @param {*} format
  * @returns
  */
-function transformExcelDate(numb, format) {
+function unstable_transformExcelDate(numb, format) {
   let time = new Date((numb - 2) * 24 * 3600000 + 1)
   time.setYear(time.getFullYear() - 70)
   let year = time.getFullYear() + ''
@@ -170,4 +175,38 @@ function transformExcelDate(numb, format) {
     return year + format + month + format + date
   }
   return year + "-" + (month < 10 ? '0' + month : month) + "-" + (date < 10 ? '0' + date : date)
+}
+
+/**
+ * Use this instead.
+ *
+ * @param {*} excelDate
+ * @returns
+ */
+function transformExcelDate(excelDate) {
+  const time = excelDateToJSDate(excelDate)
+  const year = time.getFullYear() + ''
+  const month = time.getMonth() + 1 + ''
+  const date = time.getDate() + ''
+  return year + "-" + (month < 10 ? '0' + month : month) + "-" + (date < 10 ? '0' + date : date)
+}
+
+/**
+ * Function from `https://cloud.tencent.com/developer/ask/194095`.
+ *
+ * @param {*} serial
+ * @returns
+ */
+function excelDateToJSDate(serial) {
+  var utc_days = Math.floor(serial - 25569);
+  var utc_value = utc_days * 86400;
+  var date_info = new Date(utc_value * 1000);
+  var fractional_day = serial - Math.floor(serial) + 0.0000001;
+  var total_seconds = Math.floor(86400 * fractional_day);
+  var seconds = total_seconds % 60;
+  total_seconds -= seconds;
+  var hours = Math.floor(total_seconds / (60 * 60));
+  var minutes = Math.floor(total_seconds / 60) % 60;
+
+  return new Date(date_info.getFullYear(), date_info.getMonth(), date_info.getDate(), hours, minutes, seconds);
 }
