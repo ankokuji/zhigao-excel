@@ -1,42 +1,149 @@
 const xlsx = require("node-xlsx");
 const _ = require("lodash/fp");
 const fs = require("fs");
-const path = require("path");
-const [flightDisMap, sectionMap] = require("./config.json")
+// const path = require("path");
+const [flightDisMap, sectionMap] = require("./config.json");
 
 const sectionAndFlightDistanceSheetName = "片区与航距";
 
-const sheets = xlsx.parse("./2016.xlsx");
+const sheets = xlsx.parse("./source/2018.xlsx");
+
+const filterFlightDistanceSheet = _.filter(sheet => {
+  // Filter `"片区与航距"`.
+  return sheet.name !== sectionAndFlightDistanceSheetName;
+  // Why deep clone?
+});
 
 function tap(a) {
-  return a
+  return a;
+}
+
+function generateWeekAccumTable() {
+  const year = getYearOfTable(sheets)
+  const weeklyProcessedSheets = _.compose(
+    accumulateByWeek,
+    filterFlightDistanceSheet
+  )(sheets);
+  const buffer = generateMainAndDistrictTable(weeklyProcessedSheets)
+  fs.writeFileSync(`./output/output_weekly_${year}.xlsx`, buffer);
+}
+
+function getYearOfTable(sheets) {
+  const getYearOfRow = _.compose(
+    _.head,
+    _.split("-"),
+    formatDate,
+    _.head,
+  );
+
+  return _.compose(getYearOfRow, _.nth(1), _.property("data"), _.head)(sheets)
+}
+
+function generateMainAndDistrictTable(sheets) {
+  const table = generateTotalTable(_.cloneDeep(sheets), true);
+  const districtTable = generateDistrictTable(_.cloneDeep(sheets), true);
+
+  const transformDistrictTable = _.compose(
+    _.map(([district, data]) => {
+      return {
+        name: district,
+        data
+      };
+    }),
+    _.toPairs
+  )(districtTable);
+
+  const combineTables = [
+    {
+      name: "总体",
+      data: table
+    },
+    ...transformDistrictTable
+  ];
+  return writeXlsx(combineTables);
 }
 
 function main() {
-  const table = generateTotalTable(_.cloneDeep(sheets));
-  const districtTable = generateDistrictTable(_.cloneDeep(sheets))
-
-  const transformDistrictTable = _.compose(_.map(([district, data]) => {
-    return {
-      name: district,
-      data
-    }
-  }), _.toPairs)(districtTable)
-
-  const combineTables = [{
-    name: "总体",
-    data: table
-  }, ...transformDistrictTable]
-  const buffer = writeXlsx(combineTables);
-  fs.writeFileSync(path.join(__dirname, "output.xlsx"), buffer);
+  const buffer = generateMainAndDistrictTable(sheets)
+  fs.writeFileSync("./output.xlsx", buffer);
 }
 
-main();
+// main();
+generateWeekAccumTable();
 
-function generateDistrictTable(sheets) {
-  const res = _.mapValues(handleEachDistrict)(sectionMap)
+function accumulateByWeek(sheets) {
+  sheets = _.cloneDeep(sheets);
+  sheets = _.compact(sheets);
+  const tableTitle = getOriginalTableTitle(sheets);
+  const tableWithoutTitle = _.map(sheet => {
+    const processEachSheet = _.reduce(h)({});
+    const sheetData = _.compose(
+      _.concat([tableTitle]),
+      _.map(_.identity),
+      processEachSheet,
+      _.tail
+    )(sheet.data);
+    return { name: sheet.name, data: sheetData };
+  })(sheets);
 
-  return res
+  // const table = _.concat([tableTitle])(tableWithoutTitle);
+  return tableWithoutTitle;
+
+  function h(accum, row) {
+    const rowName = _.head(row);
+    if (rowName === "总合计") {
+      // Do not handle specific sheets because they are not represent date.
+      accum[rowName] = row;
+      return accum;
+    }
+    const year = _.compose(
+      _.head,
+      _.split("-"),
+      formatDate,
+      _.head
+    )(row);
+    const weekNumString = _.compose(
+      _.toString,
+      getWeek,
+      formatDate,
+      _.head
+    )(row);
+    const identification = year + "-" + weekNumString;
+    if (!(identification in accum)) {
+      // Because
+      row[0] = identification;
+      accum[identification] = row;
+    } else {
+      accum[identification] = accumulate2ArrayWithTail(
+        accum[identification],
+        row
+      );
+    }
+    return accum;
+  }
+}
+
+/**
+ * Sum 2 arrays position by position except head.
+ *
+ * @param {*} array1
+ * @param {*} array2
+ * @returns
+ */
+function accumulate2ArrayWithTail(array1, array2) {
+  return _.zipWith((val1, val2) => {
+    if (typeof val1 === "number" && typeof val2 === "number") {
+      return val1 + val2;
+    } else {
+      return val1;
+    }
+  })(array1)(array2);
+}
+
+function generateDistrictTable(sheets, shouldHandleExcelDate) {
+  const res = _.mapValues(handleEachDistrict)(sectionMap);
+
+  return res;
   /**
    * Generate table from target trip of every district.
    *
@@ -44,24 +151,24 @@ function generateDistrictTable(sheets) {
    * @returns
    */
   function handleEachDistrict(trips) {
-    const res = _.map(_.compose(extractTargetSheet))(trips)
+    const res = _.map(_.compose(extractTargetSheet))(trips);
 
-    return generateTotalTable(res)
+    return generateTotalTable(res, shouldHandleExcelDate);
 
     function extractTargetSheet(tripOfDistance) {
-      const out = _.find((sheet) => {
-        const trip = sheet.name
-        const flag = testTripName(trip, (name) => {
-          return name === tripOfDistance
-        })
-        return !!flag
-      })(sheets)
+      const out = _.find(sheet => {
+        const trip = sheet.name;
+        const flag = testTripName(trip, name => {
+          return name === tripOfDistance;
+        });
+        return !!flag;
+      })(sheets);
 
       if (!out) {
         // throw new Error("Can't find district!!")
-        console.log(`Can't find district!! --- ${tripOfDistance}`)
+        console.log(`Can't find district!! --- ${tripOfDistance}`);
       }
-      return out
+      return out;
     }
   }
 }
@@ -72,18 +179,34 @@ function generateDistrictTable(sheets) {
  * @param {*} sheets
  * @returns
  */
-function generateTotalTable(sheets) {
-  sheets = _.compact(sheets)
-  const tableTitle = getTableTitle(sheets);
+function generateTotalTable(sheets, shouldHandleExcelDate) {
+  sheets = _.compact(sheets);
+  const tableTitle = getTableTitleWithAdditionalItem(sheets);
   const accumAll = _.reduce(accumulate)({});
-  const res = _.compose(
+  let generateTableWithoutTitle = _.compose(
     // Delete last column because it was used only in calculating.
-    _.map(_.initial), _.map(calculate), accumAll, _.map(formatDateOfSheet), tap, _.filter(sheet => {
-      // Filter `"片区与航距"`.
-      return sheet.name !== sectionAndFlightDistanceSheetName;
-      // Why deep clone?
-    }))(sheets);
-  const table = _.concat([tableTitle])(res);
+    _.map(_.initial),
+    _.map(calculate),
+    accumAll,
+  );
+  if (shouldHandleExcelDate) {
+    generateTableWithoutTitle = _.compose(generateTableWithoutTitle, _.map(formatDateOfSheet))
+  }
+  const filterTitleOfSheet = function(sheet) {
+    return {
+      ...sheet,
+      data: _.tail(sheet.data)
+    }
+  }
+  const test = _.compose(
+    generateTableWithoutTitle,
+    // Filter title of each sheet.
+    _.map(filterTitleOfSheet),
+    filterFlightDistanceSheet
+  )(sheets)
+  const table = _.concat([tableTitle])(
+    test
+  );
   return table;
 }
 
@@ -97,13 +220,19 @@ function writeXlsx(tables) {
  * @param {*} sheets
  * @returns
  */
-function getTableTitle(sheets) {
+function getTableTitleWithAdditionalItem(sheets) {
   return _.compose(
     curryFlip2(_.concat)("航距总和"),
     curryFlip2(_.concat)("统计城市数目"),
+    getOriginalTableTitle
+  )(sheets);
+}
+
+function getOriginalTableTitle(sheets) {
+  return _.compose(
     _.head,
     _.property("data"),
-    _.head
+    _.head,
   )(sheets);
 }
 
@@ -119,7 +248,7 @@ function calculate(sheet) {
 
     // 座公里=总合计收入/（提供座位数*航距）
     // row[10] = row[4] / (row[2] * _.last(row)) * (_.nth(-2)(row))
-    row[10] = row[4] / _.last(row)
+    row[10] = row[4] / _.last(row);
     return row;
   }
 }
@@ -132,8 +261,8 @@ function calculate(sheet) {
  * @returns
  */
 function curryFlip2(f) {
-  return function (x) {
-    return function (y) {
+  return function(x) {
+    return function(y) {
       return f(y)(x);
     };
   };
@@ -204,14 +333,13 @@ function testTripName(name, f) {
   let response = f(realFlightName);
 
   if (!response) {
-    response =
-      f(
-        _.compose(
-          _.join("-"),
-          _.reverse,
-          _.split("-")
-        )(realFlightName)
-      );
+    response = f(
+      _.compose(
+        _.join("-"),
+        _.reverse,
+        _.split("-")
+      )(realFlightName)
+    );
   }
 
   return response;
@@ -247,7 +375,7 @@ function getFlightDistance(name) {
   }
 
   if (!distance) {
-    throw new Error("Can't get distance from map!!!");
+    throw new Error(`Can't get distance from map!!! --- ${realFlightName}`);
   }
 
   return distance;
@@ -298,14 +426,13 @@ function formatDateOfSheet(sheet) {
     row[0] = formatDate(row[0]);
     return row;
   }
-  const formatDateOfDataOfSheet = _.compose(
+  const formatDateOfSheetTail = _.compose(
     _.map(formatDateOfRow),
-    _.tail
   );
 
   return {
     name: sheet.name,
-    data: formatDateOfDataOfSheet(sheet.data)
+    data: formatDateOfSheetTail(sheet.data)
   };
 }
 
@@ -416,4 +543,22 @@ function excelDateToJSDate(serial) {
     minutes,
     seconds
   );
+}
+
+/**
+ * Calculate the specified date in the which week of the year.
+ *
+ * @export
+ * @param {string} dt
+ * @returns
+ */
+function getWeek(dt) {
+  let d1 = new Date(dt);
+  let d2 = new Date(dt);
+  d2.setMonth(0);
+  d2.setDate(1);
+  let rq = d1 - d2;
+  let days = Math.ceil(rq / (24 * 60 * 60 * 1000));
+  let num = Math.ceil(days / 7);
+  return num;
 }

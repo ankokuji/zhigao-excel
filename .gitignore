@@ -4,4 +4,4 @@ yarn.lock
 
 /.vscode
 
-output.xlsx
+/output
